@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Match Statistics</title>
+    <script>
+        // Function to calculate Poisson probability
+        function poissonProbability(lambda, k) {
+            return (Math.pow(lambda, k) * Math.exp(-lambda)) / factorial(k);
+        }
+
+        // Helper function to calculate factorial
+        function factorial(n) {
+            if (n === 0 || n === 1) return 1;
+            let result = 1;
+            for (let i = 2; i <= n; i++) {
+                result *= i;
+            }
+            return result;
+        }
+
+        async function fetchData(url) {
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error('Network response was not ok');
+            }
+            return response.json();
+        }
+
+        function formatItems(items) {
+            const formattedItems = [];
+            items.forEach(item => {
+                const data = item["Hazai csapat;Vendég csapat ;Eredmeny"];
+                if (data) {
+                    const [home_team, away_team, result] = data.split(";").map(str => str.trim());
+                    formattedItems.push({
+                        "json": {
+                            "Hazai csapat": home_team,
+                            "Vendég csapat": away_team,
+                            "Eredmény": result
+                        }
+                    });
+                }
+            });
+            return formattedItems;
+        }
+
+        function calculatePercentage(bothTeamsScored, totalMatches) {
+            return (bothTeamsScored / totalMatches) * 100 || 0;
+        }
+
+        function calculateStatistics(formattedItems, matchups) {
+            const results = [];
+            matchups.forEach(matchup => {
+                const home_team = matchup.homeTeam;
+                const away_team = matchup.awayTeam;
+                const filteredMatches = formattedItems.filter(item => 
+                    item.json["Hazai csapat"] === home_team && item.json["Vendég csapat"] === away_team
+                );
+                const totalMatches = filteredMatches.length;
+                const bothTeamsScored = filteredMatches.filter(item => 
+                    item.json["Eredmény"].split(":").every(score => parseInt(score) > 0)
+                ).length;
+                const percentageBothTeamsScored = calculatePercentage(bothTeamsScored, totalMatches);
+                results.push({
+                    "json": {
+                        "match": {"homeTeam": home_team, "awayTeam": away_team},
+                        "totalMatches": totalMatches,
+                        "bothTeamsScored": bothTeamsScored,
+                        "percentageBothTeamsScored": percentageBothTeamsScored.toFixed(2)
+                    }
+                });
+            });
+            return results;
+        }
+
+        function runSimulations(items, simulations) {
+            const monteCarloResults = items.map((item) => {
+                const totalMatches = item?.json?.totalMatches || 0;
+                const bothTeamsScored = item?.json?.bothTeamsScored || 0;
+                const percentageBothTeamsScored = totalMatches > 0 ? (bothTeamsScored / totalMatches) * 100 : 0;
+
+                const simulatedBothTeamsScoredCount = Math.round((percentageBothTeamsScored / 100) * simulations);
+                const simulatedPercentage = (simulatedBothTeamsScoredCount / simulations) * 100;
+
+                return {
+                    match: item?.json?.match,
+                    totalMatches,
+                    bothTeamsScored,
+                    percentageBothTeamsScored: percentageBothTeamsScored.toFixed(2) + "%",
+                    simulations,
+                    simulatedBothTeamsScoredCount,
+                    simulatedPercentage: simulatedPercentage.toFixed(2) + "%"
+                };
+            });
+
+            return monteCarloResults.sort((a, b) => parseFloat(b.simulatedPercentage) - parseFloat(a.simulatedPercentage));
+        }
+
+        function displayResults(results) {
+            const output = document.getElementById('output');
+            output.innerHTML = '<div class="results-container">';
+            results.forEach((result, index) => {
+                const columnClass = index < 4 ? 'left-column' : 'right-column';
+                const borderColor = index < 3 ? 'border: 2px solid lightgreen;' : '';
+                output.innerHTML += `<div class="result-box ${columnClass}" style="${borderColor}">
+                    <p><strong>${result.match.homeTeam}</strong> vs <strong>${result.match.awayTeam}</strong></p>
+                    <p>Total Matches: ${result.totalMatches}</p>
+                    <p>Both Teams Scored: ${result.bothTeamsScored}</p>
+                    <p>Percentage: ${result.percentageBothTeamsScored}</p>
+                    <p>Simulated Percentage: ${result.simulatedPercentage}</p>
+                    ${index < 4 ? `
+                    <label for="goodTip-${index}">Jó tipp:</label>
+                    <input type="checkbox" id="goodTip-${index}" name="tip-${index}" onclick="toggleCheckbox(this)">
+                    <label for="badTip-${index}">Rossz tipp:</label>
+                    <input type="checkbox" id="badTip-${index}" name="tip-${index}" onclick="toggleCheckbox(this)">
+                    ` : ''}
+                </div>`;
+            });
+            output.innerHTML += '</div>';
+        }
+
+        function toggleCheckbox(checkbox) {
+            const checkboxes = document.getElementsByName(checkbox.name);
+            checkboxes.forEach((cb) => {
+                if (cb !== checkbox) cb.checked = false;
+            });
+        }
+
+        async function processMatchups() {
+            const input = document.getElementById('matchupsInput').value;
+            let matchups;
+            try {
+                matchups = JSON.parse(input);
+            } catch (error) {
+                document.getElementById('output').textContent = `Error: Invalid JSON input. Please check your input and try again.`;
+                return;
+            }
+            const url = "https://winmix.hu/csvjson3.json";
+            try {
+                const items = await fetchData(url);
+                const formattedItems = formatItems(items);
+                const results = calculateStatistics(formattedItems, matchups);
+                const simulations = 1472;
+                const monteCarloResults = runSimulations(results, simulations);
+                displayResults(monteCarloResults);
+            } catch (error) {
+                document.getElementById('output').textContent = `Error: ${error.message}`;
+            }
+        }
+
+        window.onload = function() {
+            document.getElementById('matchupsInput').value = `[
+    {"homeTeam": "Manchester Kék", "awayTeam": "Brighton"},
+    {"homeTeam": "Tottenham", "awayTeam": "Brentford"},
+    {"homeTeam": "Wolverhampton", "awayTeam": "Liverpool"},
+    {"homeTeam": "Chelsea", "awayTeam": "Vörös Ördögök"},
+    {"homeTeam": "Crystal Palace", "awayTeam": "Fulham"},
+    {"homeTeam": "Nottingham", "awayTeam": "Aston Oroszlán"},
+    {"homeTeam": "London Ágyúk", "awayTeam": "Everton"},
+    {"homeTeam": "Newcastle", "awayTeam": "West Ham"}
+]`;
+        }
+    </script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+        }
+        textarea {
+            width: 100%;
+            height: 150px;
+            margin-bottom: 10px;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+        }
+        #output {
+            margin-top: 20px;
+        }
+        .results-container {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            width: 80%;
+            margin: 0 auto;
+        }
+        .result-box {
+            width: 24%;
+            border: 1px solid #ccc;
+            padding: 10px;
+            margin-bottom: 10px;
+            font-size: 12px;
+        }
+        .left-column {
+            float: left;
+        }
+        .right-column {
+            float: right;
+        }
+        strong {
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <h1>Match Statistics</h1>
+    <textarea id="matchupsInput" placeholder="Enter matchups JSON here..."></textarea>
+    <br>
+    <button onclick="processMatchups()">Lekérdezés</button>
+    <div id="output"></div>
+</body>
+</html>
